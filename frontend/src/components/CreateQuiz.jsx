@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, ArrowLeft, Save, HelpCircle } from 'lucide-react';
+import { Plus, Trash2, ArrowLeft, Save, HelpCircle, Sparkles } from 'lucide-react';
+import AIQuizGeneratorModal from './AIQuizGeneratorModal';
 
 const CreateQuiz = ({ onBack, onQuizCreated }) => {
   const [title, setTitle] = useState('');
@@ -9,6 +10,7 @@ const CreateQuiz = ({ onBack, onQuizCreated }) => {
   ]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showAiModal, setShowAiModal] = useState(false);
 
   const handleQuestionChange = (index, field, value) => {
     const updated = [...questions];
@@ -94,7 +96,13 @@ const CreateQuiz = ({ onBack, onQuizCreated }) => {
         <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">
           Create New Quiz
         </h1>
-        <div className="w-20"></div> {/* Spacer for alignment */}
+        <button 
+          type="button"
+          onClick={() => setShowAiModal(true)}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-indigo-300 hover:text-white border border-indigo-500/20 hover:border-indigo-500/50 bg-indigo-500/5 hover:bg-indigo-500/10 rounded-lg transition-all duration-200"
+        >
+          <Sparkles size={16} /> Generate with AI
+        </button>
       </div>
 
       {error && (
@@ -250,6 +258,14 @@ const CreateQuiz = ({ onBack, onQuizCreated }) => {
           </button>
         </div>
       </form>
+
+      <AIQuizGeneratorModal 
+        isOpen={showAiModal}
+        onClose={() => setShowAiModal(false)}
+        onSuccess={(generatedQuestions) => {
+          setQuestions(generatedQuestions);
+        }}
+      />
     </div>
   );
 };
