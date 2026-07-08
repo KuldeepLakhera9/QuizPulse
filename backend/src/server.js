@@ -24,6 +24,7 @@ app.use(express.json());
 
 // API Routes
 app.use('/api/quizzes', quizRoutes);
+app.use('/api/quiz', quizRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
