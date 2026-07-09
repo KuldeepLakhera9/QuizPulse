@@ -93,7 +93,7 @@ const CreateQuiz = ({ onBack, onQuizCreated }) => {
         >
           <ArrowLeft size={16} /> Back
         </button>
-        <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">
+        <h1 className="text-2xl font-bold text-slate-100">
           Create New Session
         </h1>
         <button 
@@ -244,17 +244,17 @@ const CreateQuiz = ({ onBack, onQuizCreated }) => {
           <button 
             type="button"
             onClick={addQuestion}
-            className="flex-1 py-4 flex items-center justify-center gap-2 border border-dashed border-slate-700 hover:border-purple-500/50 hover:bg-purple-500/5 text-slate-300 hover:text-purple-400 rounded-2xl transition-all font-semibold"
+            className="flex-1 py-3.5 flex items-center justify-center gap-2 border border-dashed border-slate-700 hover:border-indigo-500/50 hover:bg-indigo-500/5 text-slate-300 hover:text-indigo-400 rounded-xl transition-all font-medium"
           >
-            <Plus size={20} /> Add Another Question
+            <Plus size={18} /> Add Another Question
           </button>
           
           <button 
             type="submit"
             disabled={loading}
-            className="flex-1 py-4 flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-2xl font-bold shadow-lg shadow-purple-500/20 disabled:opacity-50 transition-all"
+            className="flex-1 py-3.5 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-medium shadow-md shadow-indigo-600/10 disabled:opacity-50 transition-all"
           >
-            <Save size={20} /> {loading ? 'Saving...' : 'Save & Publish Session'}
+            <Save size={18} /> {loading ? 'Saving...' : 'Save & Publish Session'}
           </button>
         </div>
       </form>

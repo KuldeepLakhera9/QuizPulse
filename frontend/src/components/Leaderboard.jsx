@@ -93,7 +93,7 @@ const Leaderboard = ({ players, isHost, onNextQuestion, isLastQuestion }) => {
           <div className="p-6 border-t border-slate-700/40 bg-slate-800/10 flex justify-center">
             <button
               onClick={onNextQuestion}
-              className="flex items-center justify-center gap-2 px-8 py-3.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-extrabold rounded-xl shadow-lg shadow-purple-500/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
+              className="flex items-center justify-center gap-2 px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl transition-all shadow-md shadow-indigo-600/10"
             >
               {isLastQuestion ? (
                 <>

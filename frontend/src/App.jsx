@@ -7,7 +7,7 @@ import HostActive from './components/HostActive';
 import PlayerActive from './components/PlayerActive';
 import Leaderboard from './components/Leaderboard';
 import FinalResults from './components/FinalResults';
-import { Award, Play, HelpCircle, Layers, PlusCircle, Gamepad2, Wifi, WifiOff } from 'lucide-react';
+import { Award, Play, HelpCircle, Users, PlusCircle, Presentation, Wifi, WifiOff } from 'lucide-react';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5001';
 
@@ -233,13 +233,13 @@ function App() {
     <div className="min-h-screen flex flex-col justify-between">
       {/* Navbar Header */}
       <header className="glass border-b border-slate-800/80 px-6 py-4 flex items-center justify-between shadow-md">
-        <div className="flex items-center gap-2">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-purple-500/10">
-            <Gamepad2 className="text-white" size={22} />
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center shadow-md">
+            <Presentation className="text-indigo-400" size={20} />
           </div>
           <span 
             onClick={handleReturnHome}
-            className="text-xl font-black tracking-tight cursor-pointer text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500 hover:opacity-90"
+            className="text-lg font-bold tracking-tight cursor-pointer text-slate-100 hover:text-slate-300 transition-colors"
           >
             Pulse
           </span>
@@ -268,34 +268,32 @@ function App() {
             </div>
           )}
 
-          {/* VIEW: LANDING PAGE */}
           {currentView === 'landing' && (
             <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8 py-10 px-4">
               {/* Host Setup Card */}
-              <div className="glass p-8 rounded-3xl border border-slate-700/50 shadow-2xl flex flex-col justify-between space-y-6 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-purple-600/10 to-transparent blur-xl rounded-full"></div>
+              <div className="glass p-8 rounded-3xl border border-slate-800 bg-slate-900/40 shadow-xl flex flex-col justify-between space-y-6 relative overflow-hidden">
                 <div>
-                  <div className="w-12 h-12 bg-purple-500/10 border border-purple-500/30 rounded-xl flex items-center justify-center text-purple-400 mb-4">
-                    <Layers size={24} />
+                  <div className="w-12 h-12 bg-slate-800 border border-slate-700 rounded-xl flex items-center justify-center text-indigo-400 mb-4 shadow-sm">
+                    <Presentation size={24} />
                   </div>
-                  <h2 className="text-2xl font-bold text-slate-100">Host a Game</h2>
-                  <p className="text-slate-400 text-sm mt-1">Select an existing quiz template or create a new one to start playing.</p>
+                  <h2 className="text-2xl font-bold text-slate-100">Host a Session</h2>
+                  <p className="text-slate-400 text-sm mt-1">Select a training template or create a custom one to start your live workshop.</p>
 
                   <div className="mt-6">
-                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Choose Quiz</label>
+                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Choose Session Template</label>
                     {quizzesLoading ? (
-                      <div className="h-12 bg-slate-800/40 rounded-xl border border-slate-700 animate-pulse flex items-center justify-center text-xs text-slate-500">
-                        Loading quizzes...
+                      <div className="h-12 bg-slate-800/40 rounded-xl border border-slate-800 animate-pulse flex items-center justify-center text-xs text-slate-500">
+                        Loading templates...
                       </div>
                     ) : quizzes.length === 0 ? (
-                      <div className="p-4 bg-slate-800/20 border border-dashed border-slate-700 rounded-xl text-center text-sm text-slate-500">
-                        No quizzes found. Create one to begin.
+                      <div className="p-4 bg-slate-800/20 border border-dashed border-slate-800 rounded-xl text-center text-sm text-slate-500">
+                        No templates found. Create one to begin.
                       </div>
                     ) : (
                       <select 
                         value={selectedQuizId}
                         onChange={(e) => setSelectedQuizId(e.target.value)}
-                        className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
+                        className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
                       >
                         {quizzes.map((q) => (
                           <option key={q._id} value={q._id}>{q.title} (by {q.hostName})</option>
@@ -309,34 +307,33 @@ function App() {
                   <button
                     onClick={handleHostGame}
                     disabled={quizzes.length === 0}
-                    className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold rounded-xl shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-indigo-600/10"
                   >
-                    <Play size={18} fill="currentColor" /> Host Chosen Quiz
+                    <Play size={16} fill="currentColor" /> Host Live Session
                   </button>
                   <button
                     onClick={() => setCurrentView('create-quiz')}
-                    className="w-full py-3.5 border border-purple-500/30 hover:border-purple-500/60 bg-purple-500/5 hover:bg-purple-500/10 text-purple-300 font-bold rounded-xl transition-all flex items-center justify-center gap-2"
+                    className="w-full py-3 border border-slate-700 hover:border-slate-600 bg-slate-800/40 hover:bg-slate-800/80 text-slate-300 font-medium rounded-xl transition-all flex items-center justify-center gap-2 shadow-sm"
                   >
-                    <PlusCircle size={18} /> Create Custom Quiz
+                    <PlusCircle size={16} /> Create Custom Template
                   </button>
                 </div>
               </div>
 
               {/* Player Join Card */}
-              <div className="glass p-8 rounded-3xl border border-slate-700/50 shadow-2xl flex flex-col justify-between space-y-6 relative overflow-hidden">
-                <div className="absolute bottom-0 left-0 w-24 h-24 bg-gradient-to-tr from-pink-600/10 to-transparent blur-xl rounded-full"></div>
+              <div className="glass p-8 rounded-3xl border border-slate-800 bg-slate-900/40 shadow-xl flex flex-col justify-between space-y-6 relative overflow-hidden">
                 <div>
-                  <div className="w-12 h-12 bg-pink-500/10 border border-pink-500/30 rounded-xl flex items-center justify-center text-pink-400 mb-4">
-                    <Gamepad2 size={24} />
+                  <div className="w-12 h-12 bg-slate-800 border border-slate-700 rounded-xl flex items-center justify-center text-indigo-400 mb-4 shadow-sm">
+                    <Users size={24} />
                   </div>
-                  <h2 className="text-2xl font-bold text-slate-100">Play Game</h2>
-                  <p className="text-slate-400 text-sm mt-1">Join a quiz room hosted by a friend to test your knowledge.</p>
+                  <h2 className="text-2xl font-bold text-slate-100">Join Session</h2>
+                  <p className="text-slate-400 text-sm mt-1">Enter your room invitation code and nickname to participate in the live event.</p>
                 </div>
 
                 <div className="pt-10">
                   <button
                     onClick={() => setCurrentView('join-game')}
-                    className="w-full py-4 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-black text-lg rounded-xl shadow-lg shadow-pink-500/20 transition-all flex items-center justify-center gap-2"
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl transition-all flex items-center justify-center gap-2 shadow-md shadow-indigo-600/10"
                   >
                     Join with Room Code
                   </button>

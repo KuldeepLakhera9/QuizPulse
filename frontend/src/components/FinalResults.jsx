@@ -124,7 +124,7 @@ const FinalResults = ({ results, onHome }) => {
       <div className="flex justify-center">
         <button
           onClick={onHome}
-          className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-extrabold text-lg rounded-2xl shadow-xl shadow-purple-500/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
+          className="flex items-center gap-2 px-8 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium rounded-xl transition-all shadow-md"
         >
           <Home size={18} /> Return to Home Screen
         </button>
