@@ -15,7 +15,9 @@ describe('Quiz API & AI Schema Validation Tests', () => {
 
   afterAll(async () => {
     await mongoose.connection.close();
-    await new Promise((resolve) => server.close(resolve));
+    if (server.listening) {
+      await new Promise((resolve) => server.close(resolve));
+    }
     await redisClient.quit();
     await pubClient.quit();
     await subClient.quit();

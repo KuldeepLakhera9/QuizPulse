@@ -32,8 +32,16 @@ if (process.env.NODE_ENV === 'test') {
     maxRetriesPerRequest: null
   });
 
+  pubClient.on('error', (err) => {
+    console.error('Redis pub client error:', err.message);
+  });
+
   subClient = new Redis(redisUrl, {
     maxRetriesPerRequest: null
+  });
+
+  subClient.on('error', (err) => {
+    console.error('Redis sub client error:', err.message);
   });
 }
 

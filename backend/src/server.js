@@ -78,9 +78,11 @@ if (process.env.NODE_ENV !== 'test') {
 registerSocketHandlers(io);
 
 // Start Server
-const PORT = process.env.PORT || 5001;
-server.listen(PORT, () => {
-  logger.info(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-});
+if (process.env.NODE_ENV !== 'test') {
+  const PORT = process.env.PORT || 5001;
+  server.listen(PORT, () => {
+    logger.info(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+  });
+}
 
 export { app, server, io }; // Export for Jest/Supertest testing
