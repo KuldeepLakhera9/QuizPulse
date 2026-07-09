@@ -241,7 +241,7 @@ function App() {
             onClick={handleReturnHome}
             className="text-xl font-black tracking-tight cursor-pointer text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500 hover:opacity-90"
           >
-            QuizPulse
+            Pulse
           </span>
         </div>
 
@@ -429,7 +429,7 @@ function App() {
 
       {/* Footer Branding */}
       <footer className="py-6 text-center text-xs text-slate-500 border-t border-slate-800/40 bg-slate-900/10">
-        &copy; {new Date().getFullYear()} QuizPulse. Built for real-time collaborative gameplay.
+        &copy; {new Date().getFullYear()} Pulse. Real-time engagement platform for team training, workshops, and live events.
       </footer>
     </div>
   );

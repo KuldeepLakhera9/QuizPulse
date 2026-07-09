@@ -42,7 +42,7 @@ const CreateQuiz = ({ onBack, onQuizCreated }) => {
     
     // Simple Validations
     if (!title.trim() || !hostName.trim()) {
-      setError('Please fill in the Quiz Title and Host Name.');
+      setError('Please fill in the Session Title and Host Name.');
       return;
     }
 
@@ -94,7 +94,7 @@ const CreateQuiz = ({ onBack, onQuizCreated }) => {
           <ArrowLeft size={16} /> Back
         </button>
         <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">
-          Create New Quiz
+          Create New Session
         </h1>
         <button 
           type="button"
@@ -114,13 +114,13 @@ const CreateQuiz = ({ onBack, onQuizCreated }) => {
       <form onSubmit={handleSubmit} className="space-y-8">
         {/* Basic Info Card */}
         <div className="glass p-6 rounded-2xl border border-slate-700/50 space-y-4 shadow-xl">
-          <h2 className="text-xl font-bold text-slate-200">Quiz Settings</h2>
+          <h2 className="text-xl font-bold text-slate-200">Session Settings</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Quiz Title</label>
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Session Title</label>
               <input 
                 type="text"
-                placeholder="e.g. JavaScript Trivia Master"
+                placeholder="e.g. JavaScript Trivia Workshop"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all"
@@ -254,7 +254,7 @@ const CreateQuiz = ({ onBack, onQuizCreated }) => {
             disabled={loading}
             className="flex-1 py-4 flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-2xl font-bold shadow-lg shadow-purple-500/20 disabled:opacity-50 transition-all"
           >
-            <Save size={20} /> {loading ? 'Saving...' : 'Save & Publish Quiz'}
+            <Save size={20} /> {loading ? 'Saving...' : 'Save & Publish Session'}
           </button>
         </div>
       </form>

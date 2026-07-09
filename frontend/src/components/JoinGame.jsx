@@ -47,8 +47,8 @@ const JoinGame = ({ onBack, onJoinRoom, error: externalError }) => {
           <div className="w-16 h-16 bg-purple-500/10 border border-purple-500/30 rounded-2xl flex items-center justify-center text-purple-400 mb-4 shadow-lg shadow-purple-500/5">
             <Users size={32} />
           </div>
-          <h2 className="text-2xl font-bold text-slate-100">Join a Quiz Room</h2>
-          <p className="text-slate-400 text-sm mt-1">Enter your room code and choose a nickname to play.</p>
+          <h2 className="text-2xl font-bold text-slate-100">Join Live Session</h2>
+          <p className="text-slate-400 text-sm mt-1">Enter your session room code and choose a nickname to participate.</p>
         </div>
 
         {renderError && (

@@ -1,10 +1,80 @@
+/**
+ * ============================================================================
+ * HORIZONTAL SCALING & MULTI-SERVER STATE SYNCHRONIZATION (REDIS ADAPTER)
+ * ============================================================================
+ * 
+ * WHY THIS MATTERS:
+ * In a production-grade load-balanced architecture, horizontal scaling is achieved
+ * by running multiple Node.js/Socket.io server instances behind a load balancer (e.g. Nginx).
+ * Without central state persistence, two major problems occur:
+ * 
+ * 1. SOCKET BROADCAST SPLIT:
+ *    If Player A is connected to Server Instance 1, and Player B is connected to Server Instance 2,
+ *    an event broadcast from Server Instance 1 (like a question broadcast) will NOT reach Player B 
+ *    unless the Socket.io instances are bridged. We solve this by attaching `@socket.io/redis-adapter`
+ *    which passes broadcast packets across processes via Redis Pub/Sub channels.
+ * 
+ * 2. VOLATILE SESSION STATE SPLIT:
+ *    Active session variables (player names, active scores, question indices, timer ticks) 
+ *    cannot be stored in local server memory (`new Map()`) because subsequent socket requests 
+ *    or reconnected players might land on different server instances. We solve this by migrating 
+ *    all live room states to Redis Hashes (keyed by `room:<roomCode>`), making active room records 
+ *    globally readable and writable by any cluster instance.
+ * ============================================================================
+ */
+
 import Quiz from '../models/Quiz.js';
 import GameSession from '../models/GameSession.js';
 import PlayerResult from '../models/PlayerResult.js';
+import { redisClient } from '../config/redis.js';
+import logger from '../config/logger.js';
 
-// In-memory registry for active rooms
-// roomCode => { timerInterval, timeLeft, question, hostSocketId, hostTimeout }
-const activeRooms = new Map();
+// Local in-memory registry ONLY for non-serializable Node event intervals/timers
+// roomCode => { timerInterval, timeLeft, question }
+const localTimerRegistry = new Map();
+
+// Helper to fetch parsed GameSession state from Redis
+const getSessionFromRedis = async (roomCode) => {
+  try {
+    const raw = await redisClient.hgetall(`room:${roomCode}`);
+    if (!raw || Object.keys(raw).length === 0) return null;
+    return {
+      quizId: raw.quizId,
+      hostSocketId: raw.hostSocketId,
+      status: raw.status,
+      currentQuestionIndex: parseInt(raw.currentQuestionIndex, 10),
+      players: JSON.parse(raw.players || '[]'),
+      answersReceived: JSON.parse(raw.answersReceived || '[]'),
+      questionStartTime: raw.questionStartTime ? new Date(parseInt(raw.questionStartTime, 10)) : null
+    };
+  } catch (err) {
+    logger.error('Failed to get session from Redis', { roomCode, error: err.message });
+    return null;
+  }
+};
+
+// Helper to update session state in Redis
+const saveSessionToRedis = async (roomCode, data) => {
+  try {
+    const updates = {};
+    if (data.quizId !== undefined) updates.quizId = String(data.quizId);
+    if (data.hostSocketId !== undefined) updates.hostSocketId = String(data.hostSocketId);
+    if (data.status !== undefined) updates.status = String(data.status);
+    if (data.currentQuestionIndex !== undefined) updates.currentQuestionIndex = String(data.currentQuestionIndex);
+    if (data.players !== undefined) updates.players = JSON.stringify(data.players);
+    if (data.answersReceived !== undefined) updates.answersReceived = JSON.stringify(data.answersReceived);
+    if (data.questionStartTime !== undefined) {
+      updates.questionStartTime = data.questionStartTime ? String(new Date(data.questionStartTime).getTime()) : '';
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await redisClient.hset(`room:${roomCode}`, updates);
+      await redisClient.expire(`room:${roomCode}`, 86400); // 24 Hours TTL for auto-cleanup
+    }
+  } catch (err) {
+    logger.error('Failed to save session to Redis', { roomCode, error: err.message });
+  }
+};
 
 // Helper to generate a unique 6-character room code
 const generateRoomCode = () => {
@@ -18,7 +88,7 @@ const generateRoomCode = () => {
 
 export const registerSocketHandlers = (io) => {
   io.on('connection', (socket) => {
-    console.log(`Socket connected: ${socket.id}`);
+    logger.info('New client socket connected', { id: socket.id });
 
     // --- HOST: CREATE ROOM ---
     socket.on('host:create-room', async ({ quizId, nickname }) => {
@@ -28,53 +98,50 @@ export const registerSocketHandlers = (io) => {
           return;
         }
 
-        // Find the quiz to ensure it exists
         const quiz = await Quiz.findById(quizId);
         if (!quiz) {
-          socket.emit('error', { message: 'Quiz not found' });
+          socket.emit('error', { message: 'Quiz template not found' });
           return;
         }
 
-        // Generate a unique room code
         let roomCode = generateRoomCode();
-        let sessionExists = await GameSession.findOne({ roomCode, status: { $ne: 'finished' } });
-        
-        // Loop to handle potential code collisions
-        while (sessionExists) {
+        let exists = await redisClient.exists(`room:${roomCode}`);
+        while (exists) {
           roomCode = generateRoomCode();
-          sessionExists = await GameSession.findOne({ roomCode, status: { $ne: 'finished' } });
+          exists = await redisClient.exists(`room:${roomCode}`);
         }
 
-        // Create new game session
+        // Initialize active state in Redis
+        await saveSessionToRedis(roomCode, {
+          quizId: quiz._id,
+          hostSocketId: socket.id,
+          status: 'lobby',
+          currentQuestionIndex: -1,
+          players: [],
+          answersReceived: [],
+          questionStartTime: null
+        });
+
+        // Mirror backing session in MongoDB
         const session = new GameSession({
-          quizId,
+          quizId: quiz._id,
           roomCode,
           status: 'lobby',
           players: [],
-          currentQuestionIndex: -1,
-          lastActive: new Date()
+          currentQuestionIndex: -1
         });
         await session.save();
 
-        // Register room details in-memory
-        activeRooms.set(roomCode, {
-          timerInterval: null,
-          timeLeft: 0,
-          question: null,
-          hostSocketId: socket.id,
-          hostTimeout: null
-        });
-
-        // Associate metadata to socket
+        // Assign metadata to host socket
         socket.join(roomCode);
         socket.roomCode = roomCode;
         socket.isHost = true;
         socket.nickname = nickname || 'Host';
 
-        console.log(`Room created: ${roomCode} by host: ${socket.id}`);
+        logger.info('Lobby room created and stored in Redis', { roomCode, hostId: socket.id });
         socket.emit('host:create-room-success', { roomCode, session });
       } catch (error) {
-        console.error('Error in host:create-room:', error);
+        logger.error('Error in host:create-room', { error: error.message });
         socket.emit('error', { message: 'Failed to create room' });
       }
     });
@@ -90,34 +157,27 @@ export const registerSocketHandlers = (io) => {
         const formattedCode = roomCode.trim().toUpperCase();
         const cleanNickname = nickname.trim();
 
-        // Find active game session
-        const session = await GameSession.findOne({ 
-          roomCode: formattedCode, 
-          status: { $ne: 'finished' } 
-        });
-
+        // Retrieve from Redis instead of hitting MongoDB for fast lookup
+        const session = await getSessionFromRedis(formattedCode);
         if (!session) {
-          socket.emit('error', { message: 'Room not found or game has finished' });
+          socket.emit('error', { message: 'Room not found or game has concluded' });
           return;
         }
 
-        // Check if player is already in this session (reconnection scenario)
+        // Handle reconnect scenario
         const playerIndex = session.players.findIndex(p => p.nickname.toLowerCase() === cleanNickname.toLowerCase());
 
         if (playerIndex !== -1) {
-          // Reconnection: update socket ID
           session.players[playerIndex].socketId = socket.id;
-          session.lastActive = new Date();
-          await session.save();
+          await saveSessionToRedis(formattedCode, { players: session.players });
 
           socket.join(formattedCode);
           socket.roomCode = formattedCode;
           socket.isHost = false;
           socket.nickname = cleanNickname;
 
-          console.log(`Player reconnected: ${cleanNickname} inside room ${formattedCode} (new socket: ${socket.id})`);
+          logger.info('Participant reconnected, updated socket ID in Redis', { formattedCode, nickname: cleanNickname, socketId: socket.id });
           
-          // Emit success back to player
           socket.emit('player:join-success', { 
             roomCode: formattedCode, 
             nickname: cleanNickname,
@@ -125,61 +185,46 @@ export const registerSocketHandlers = (io) => {
             currentQuestionIndex: session.currentQuestionIndex
           });
 
-          // Inform all clients in the room
           io.to(formattedCode).emit('room:players-updated', session.players);
 
-          // If game is active, push the current question state immediately to this reconnected player
+          // If session is already active, push the question state immediately
           if (session.status === 'active' && session.currentQuestionIndex >= 0) {
             const quiz = await Quiz.findById(session.quizId);
             const question = quiz.questions[session.currentQuestionIndex];
-            const roomData = activeRooms.get(formattedCode);
-            
+            const localTimer = localTimerRegistry.get(formattedCode);
+
             socket.emit('server:question-broadcast', {
               questionText: question.text,
               options: question.options,
               timeLimit: question.timeLimit,
               index: session.currentQuestionIndex,
               total: quiz.questions.length,
-              // If they already answered, let them know or let them select
               alreadyAnswered: session.answersReceived.includes(cleanNickname),
-              timeLeft: roomData ? roomData.timeLeft : 0
+              timeLeft: localTimer ? localTimer.timeLeft : 0
             });
           }
           return;
         }
 
-        // If game has already started, do not allow new players to join
         if (session.status === 'active') {
-          socket.emit('error', { message: 'Game has already started. Cannot join now.' });
+          socket.emit('error', { message: 'Session is currently active. Cannot join now.' });
           return;
         }
 
-        // Add new player to session
+        // Register new player in Redis
         session.players.push({
           socketId: socket.id,
           nickname: cleanNickname,
           score: 0
         });
-        session.lastActive = new Date();
-        await session.save();
+        await saveSessionToRedis(formattedCode, { players: session.players });
 
         socket.join(formattedCode);
         socket.roomCode = formattedCode;
         socket.isHost = false;
         socket.nickname = cleanNickname;
 
-        console.log(`Player joined: ${cleanNickname} in room ${formattedCode}`);
-
-        // Update activeRooms registry if it is missing (e.g. server restarted but session is in DB)
-        if (!activeRooms.has(formattedCode)) {
-          activeRooms.set(formattedCode, {
-            timerInterval: null,
-            timeLeft: 0,
-            question: null,
-            hostSocketId: null,
-            hostTimeout: null
-          });
-        }
+        logger.info('New participant registered in Redis hash', { formattedCode, nickname: cleanNickname });
 
         socket.emit('player:join-success', { 
           roomCode: formattedCode, 
@@ -188,10 +233,9 @@ export const registerSocketHandlers = (io) => {
           currentQuestionIndex: -1
         });
 
-        // Broadcast updated player list to everyone in room
         io.to(formattedCode).emit('room:players-updated', session.players);
       } catch (error) {
-        console.error('Error in player:join-room:', error);
+        logger.error('Error in player:join-room', { error: error.message });
         socket.emit('error', { message: 'Failed to join room' });
       }
     });
@@ -200,37 +244,40 @@ export const registerSocketHandlers = (io) => {
     socket.on('host:start-quiz', async ({ roomCode }) => {
       try {
         const formattedCode = roomCode.toUpperCase();
-        const roomData = activeRooms.get(formattedCode);
+        const session = await getSessionFromRedis(formattedCode);
 
-        // Verify socket is the host (allow if reconnecting host matches)
-        if (!socket.isHost && (!roomData || roomData.hostSocketId !== socket.id)) {
-          socket.emit('error', { message: 'Unauthorized: Only the host can start the quiz' });
-          return;
-        }
-
-        const session = await GameSession.findOne({ roomCode: formattedCode });
         if (!session) {
           socket.emit('error', { message: 'Session not found' });
           return;
         }
 
-        session.status = 'active';
-        session.currentQuestionIndex = 0;
-        session.lastActive = new Date();
-        await session.save();
-
-        // Load quiz questions
-        const quiz = await Quiz.findById(session.quizId);
-        if (!quiz || quiz.questions.length === 0) {
-          socket.emit('error', { message: 'Quiz has no questions' });
+        if (!socket.isHost && session.hostSocketId !== socket.id) {
+          socket.emit('error', { message: 'Unauthorized: Only the host can start the session' });
           return;
         }
 
-        // Start broadcasting first question
-        broadcastQuestion(io, formattedCode, session, quiz);
+        // Update active status in Redis
+        await saveSessionToRedis(formattedCode, {
+          status: 'active',
+          currentQuestionIndex: 0
+        });
+
+        // Sync state back to MongoDB
+        await GameSession.findOneAndUpdate({ roomCode: formattedCode }, {
+          status: 'active',
+          currentQuestionIndex: 0
+        });
+
+        const quiz = await Quiz.findById(session.quizId);
+        if (!quiz || quiz.questions.length === 0) {
+          socket.emit('error', { message: 'Session template questions are missing' });
+          return;
+        }
+
+        broadcastQuestion(io, formattedCode, 0, quiz);
       } catch (error) {
-        console.error('Error in host:start-quiz:', error);
-        socket.emit('error', { message: 'Failed to start quiz' });
+        logger.error('Error in host:start-quiz', { error: error.message });
+        socket.emit('error', { message: 'Failed to start session' });
       }
     });
 
@@ -238,74 +285,61 @@ export const registerSocketHandlers = (io) => {
     socket.on('player:submit-answer', async ({ roomCode, nickname, selectedIndex }) => {
       try {
         const formattedCode = roomCode.toUpperCase();
-        const roomData = activeRooms.get(formattedCode);
+        const session = await getSessionFromRedis(formattedCode);
+        const localTimer = localTimerRegistry.get(formattedCode);
 
-        if (!roomData || !roomData.question) {
-          socket.emit('error', { message: 'No active question found' });
+        if (!session || !localTimer || !localTimer.question) {
+          socket.emit('error', { message: 'No active question found for this session.' });
           return;
         }
 
-        const session = await GameSession.findOne({ roomCode: formattedCode });
-        if (!session || session.status !== 'active') {
-          socket.emit('error', { message: 'Active game session not found' });
-          return;
-        }
-
-        // Check if player has already submitted an answer for this question
         if (session.answersReceived.includes(nickname)) {
-          socket.emit('error', { message: 'You have already submitted an answer for this question' });
+          socket.emit('error', { message: 'Answer has already been submitted.' });
           return;
         }
 
-        const currentQuestion = roomData.question;
+        const currentQuestion = localTimer.question;
         const timeTakenMs = Date.now() - session.questionStartTime.getTime();
         const timeTakenSeconds = timeTakenMs / 1000;
         const isCorrect = selectedIndex === currentQuestion.correctIndex;
 
-        // Calculate score server-authoritatively
         let pointsEarned = 0;
         if (isCorrect) {
           const basePoints = 1000;
           const ratio = timeTakenSeconds / currentQuestion.timeLimit;
-          // Score formula: base_points * (1 - timeTaken/timeLimit)
           pointsEarned = Math.round(basePoints * (1 - ratio));
-          // Keep points between 100 and 1000 for correct answers (minimum 100 points for correct to reward correctness)
           pointsEarned = Math.max(100, Math.min(basePoints, pointsEarned));
         }
 
-        // Update player's score and answers list
         const player = session.players.find(p => p.nickname === nickname);
-        let previousScore = 0;
         if (player) {
-          previousScore = player.score;
           player.score += pointsEarned;
         }
 
         session.answersReceived.push(nickname);
-        session.lastActive = new Date();
-        await session.save();
-
-        // Log result details for persisting at the end of quiz
-        let playerResult = await PlayerResult.findOne({ sessionId: session._id, nickname });
-        if (!playerResult) {
-          playerResult = new PlayerResult({
-            sessionId: session._id,
-            nickname,
-            answers: [],
-            finalScore: 0,
-            rank: 99
-          });
-        }
-        playerResult.answers.push({
-          questionId: currentQuestion._id,
-          selected: selectedIndex,
-          correct: isCorrect,
-          timeTakenMs
+        await saveSessionToRedis(formattedCode, {
+          players: session.players,
+          answersReceived: session.answersReceived
         });
-        playerResult.finalScore = player ? player.score : 0;
-        await playerResult.save();
 
-        // Send submission feedback to the specific player
+        // Persist progress to MongoDB asynchronously in the background
+        PlayerResult.findOneAndUpdate(
+          { sessionId: session._id || await getSessionMongoId(formattedCode), nickname },
+          { 
+            $push: { 
+              answers: { 
+                questionId: currentQuestion._id, 
+                selected: selectedIndex, 
+                correct: isCorrect, 
+                timeTakenMs 
+              } 
+            },
+            $set: { finalScore: player ? player.score : 0 }
+          },
+          { upsert: true }
+        ).catch(err => logger.error('MongoDB async player result update failed', { error: err.message }));
+
+        // Emit feedback directly to player
         socket.emit('player:submit-feedback', {
           isCorrect,
           correctIndex: currentQuestion.correctIndex,
@@ -313,20 +347,20 @@ export const registerSocketHandlers = (io) => {
           totalScore: player ? player.score : 0
         });
 
-        // Broadcast to host the updated submission count
+        // Notify Host
+        const activePlayersCount = session.players.filter(p => p.socketId !== null).length;
         io.to(formattedCode).emit('room:answer-submitted', {
           answersCount: session.answersReceived.length,
-          totalPlayers: session.players.filter(p => p.socketId !== null).length
+          totalPlayers: activePlayersCount
         });
 
-        // Optional: If all active connected players have submitted, trigger end of question early
-        const connectedPlayers = session.players.filter(p => p.socketId !== null);
-        if (session.answersReceived.length >= connectedPlayers.length) {
-          revealQuestionResults(io, formattedCode, session);
+        // If everyone connection-active has responded, reveal question early
+        if (session.answersReceived.length >= activePlayersCount) {
+          revealQuestionResults(io, formattedCode);
         }
       } catch (error) {
-        console.error('Error in player:submit-answer:', error);
-        socket.emit('error', { message: 'Failed to submit answer' });
+        logger.error('Error in player:submit-answer', { error: error.message });
+        socket.emit('error', { message: 'Failed to submit response.' });
       }
     });
 
@@ -334,39 +368,33 @@ export const registerSocketHandlers = (io) => {
     socket.on('host:next-question', async ({ roomCode }) => {
       try {
         const formattedCode = roomCode.toUpperCase();
-        const roomData = activeRooms.get(formattedCode);
+        const session = await getSessionFromRedis(formattedCode);
 
-        // Verify host
-        if (!socket.isHost && (!roomData || roomData.hostSocketId !== socket.id)) {
-          socket.emit('error', { message: 'Unauthorized' });
-          return;
-        }
-
-        const session = await GameSession.findOne({ roomCode: formattedCode });
         if (!session || session.status !== 'active') {
-          socket.emit('error', { message: 'Session not found' });
+          socket.emit('error', { message: 'Session is not active' });
           return;
         }
 
-        // Load quiz questions
         const quiz = await Quiz.findById(session.quizId);
         const nextIndex = session.currentQuestionIndex + 1;
 
         if (nextIndex >= quiz.questions.length) {
-          // If no more questions, end quiz and show final leaderboard
-          endGameAndBroadcastResults(io, formattedCode, session);
+          await endGameAndBroadcastResults(io, formattedCode, session);
         } else {
-          // Move index and broadcast next question
-          session.currentQuestionIndex = nextIndex;
-          session.answersReceived = [];
-          session.lastActive = new Date();
-          await session.save();
+          await saveSessionToRedis(formattedCode, {
+            currentQuestionIndex: nextIndex,
+            answersReceived: []
+          });
 
-          broadcastQuestion(io, formattedCode, session, quiz);
+          await GameSession.findOneAndUpdate({ roomCode: formattedCode }, {
+            currentQuestionIndex: nextIndex
+          });
+
+          broadcastQuestion(io, formattedCode, nextIndex, quiz);
         }
       } catch (error) {
-        console.error('Error in host:next-question:', error);
-        socket.emit('error', { message: 'Failed to proceed to next question' });
+        logger.error('Error in host:next-question', { error: error.message });
+        socket.emit('error', { message: 'Failed to advance to next question' });
       }
     });
 
@@ -374,74 +402,49 @@ export const registerSocketHandlers = (io) => {
     socket.on('host:end-quiz', async ({ roomCode }) => {
       try {
         const formattedCode = roomCode.toUpperCase();
-        const roomData = activeRooms.get(formattedCode);
-
-        // Verify host
-        if (!socket.isHost && (!roomData || roomData.hostSocketId !== socket.id)) {
-          socket.emit('error', { message: 'Unauthorized' });
-          return;
+        const session = await getSessionFromRedis(formattedCode);
+        if (session) {
+          await endGameAndBroadcastResults(io, formattedCode, session);
         }
-
-        const session = await GameSession.findOne({ roomCode: formattedCode });
-        if (!session) {
-          socket.emit('error', { message: 'Session not found' });
-          return;
-        }
-
-        await endGameAndBroadcastResults(io, formattedCode, session);
       } catch (error) {
-        console.error('Error in host:end-quiz:', error);
-        socket.emit('error', { message: 'Failed to end quiz' });
+        logger.error('Error in host:end-quiz', { error: error.message });
+        socket.emit('error', { message: 'Failed to end session' });
       }
     });
 
     // --- CLEANUP ON DISCONNECT ---
     socket.on('disconnect', async () => {
-      console.log(`Socket disconnected: ${socket.id}`);
-      
       const roomCode = socket.roomCode;
       if (!roomCode) return;
 
       const formattedCode = roomCode.toUpperCase();
-      const roomData = activeRooms.get(formattedCode);
+      const session = await getSessionFromRedis(formattedCode);
+      if (!session) return;
 
       if (socket.isHost) {
-        console.log(`Host disconnected from room ${formattedCode}. Initiating grace period...`);
+        logger.warn('Host disconnected, starting grace period', { formattedCode, hostId: socket.id });
         
-        // Start 60 second timeout for host to reconnect
-        if (roomData) {
-          if (roomData.hostTimeout) clearTimeout(roomData.hostTimeout);
-          
-          roomData.hostTimeout = setTimeout(async () => {
-            console.log(`Host reconnect timeout expired. Ending room ${formattedCode}.`);
-            // Clean up session in DB
-            const session = await GameSession.findOne({ roomCode: formattedCode });
-            if (session && session.status !== 'finished') {
-              await endGameAndBroadcastResults(io, formattedCode, session);
-            }
-            // Clear memory
-            if (roomData.timerInterval) clearInterval(roomData.timerInterval);
-            activeRooms.delete(formattedCode);
-          }, 60000); // 60s
-        }
-      } else {
-        // Player disconnected: update socket ID to null in the players list
-        try {
-          const session = await GameSession.findOne({ roomCode: formattedCode });
-          if (session) {
-            const player = session.players.find(p => p.socketId === socket.id);
-            if (player) {
-              console.log(`Player ${player.nickname} disconnected from room ${formattedCode}`);
-              player.socketId = null;
-              session.lastActive = new Date();
-              await session.save();
-
-              // Notify room
-              io.to(formattedCode).emit('room:players-updated', session.players);
-            }
+        // Use a timeout to verify if host re-registers on this or another cluster node
+        // In Redis, we could set a lock or handle locally. To keep it clean, set local timeout:
+        const localTimer = localTimerRegistry.get(formattedCode) || {};
+        if (localTimer.hostTimeout) clearTimeout(localTimer.hostTimeout);
+        
+        localTimer.hostTimeout = setTimeout(async () => {
+          logger.info('Host reconnect window expired, concluding room session', { formattedCode });
+          const freshSession = await getSessionFromRedis(formattedCode);
+          if (freshSession && freshSession.status !== 'finished') {
+            await endGameAndBroadcastResults(io, formattedCode, freshSession);
           }
-        } catch (error) {
-          console.error('Error handling player disconnect:', error);
+        }, 60000); // 60s
+        localTimerRegistry.set(formattedCode, localTimer);
+      } else {
+        // Player disconnected: update socket ID to null in Redis
+        const player = session.players.find(p => p.socketId === socket.id);
+        if (player) {
+          logger.info('Participant socket disconnected', { formattedCode, nickname: player.nickname });
+          player.socketId = null;
+          await saveSessionToRedis(formattedCode, { players: session.players });
+          io.to(formattedCode).emit('room:players-updated', session.players);
         }
       }
     });
@@ -450,130 +453,103 @@ export const registerSocketHandlers = (io) => {
     socket.on('host:reconnect-room', async ({ roomCode }) => {
       try {
         const formattedCode = roomCode.toUpperCase();
-        const roomData = activeRooms.get(formattedCode);
+        const session = await getSessionFromRedis(formattedCode);
 
-        // Find active session
-        const session = await GameSession.findOne({ roomCode: formattedCode, status: { $ne: 'finished' } });
         if (!session) {
-          socket.emit('error', { message: 'Lobby not found or already finished' });
+          socket.emit('error', { message: 'Session concluded or not found.' });
           return;
         }
 
-        // Re-assign host
-        if (roomData) {
-          if (roomData.hostTimeout) {
-            clearTimeout(roomData.hostTimeout);
-            roomData.hostTimeout = null;
-          }
-          roomData.hostSocketId = socket.id;
-        } else {
-          activeRooms.set(formattedCode, {
-            timerInterval: null,
-            timeLeft: 0,
-            question: null,
-            hostSocketId: socket.id,
-            hostTimeout: null
-          });
+        // Cancel the concluding grace period timeout
+        const localTimer = localTimerRegistry.get(formattedCode);
+        if (localTimer && localTimer.hostTimeout) {
+          clearTimeout(localTimer.hostTimeout);
+          localTimer.hostTimeout = null;
         }
+
+        await saveSessionToRedis(formattedCode, { hostSocketId: socket.id });
 
         socket.join(formattedCode);
         socket.roomCode = formattedCode;
         socket.isHost = true;
         socket.nickname = 'Host';
 
-        console.log(`Host reconnected successfully to room ${formattedCode}`);
-        socket.emit('host:reconnect-success', { roomCode, session });
-        
-        // Push full state back to host
+        logger.info('Host successfully reconnected to session', { formattedCode, hostId: socket.id });
+        socket.emit('host:reconnect-success', { roomCode: formattedCode, session });
         socket.emit('room:players-updated', session.players);
       } catch (error) {
-        console.error('Error in host:reconnect-room:', error);
-        socket.emit('error', { message: 'Failed to reconnect host' });
+        logger.error('Error in host:reconnect-room', { error: error.message });
+        socket.emit('error', { message: 'Failed to reconnect host.' });
       }
     });
   });
 };
 
 // Helper: Broadcast question and start timer loop
-const broadcastQuestion = (io, roomCode, session, quiz) => {
-  const roomData = activeRooms.get(roomCode);
-  if (!roomData) return;
-
-  // Clear existing timer interval
-  if (roomData.timerInterval) {
-    clearInterval(roomData.timerInterval);
+const broadcastQuestion = async (io, roomCode, questionIndex, quiz) => {
+  const question = quiz.questions[questionIndex];
+  
+  // Set question details in local registry
+  const localTimer = localTimerRegistry.get(roomCode) || { timerInterval: null, timeLeft: 0, question: null };
+  if (localTimer.timerInterval) {
+    clearInterval(localTimer.timerInterval);
   }
 
-  const question = quiz.questions[session.currentQuestionIndex];
-  roomData.question = question;
-  roomData.timeLeft = question.timeLimit;
+  localTimer.question = question;
+  localTimer.timeLeft = question.timeLimit;
+  localTimerRegistry.set(roomCode, localTimer);
 
-  // Save the start time for scoring speed calculations
-  session.questionStartTime = new Date();
-  session.save();
+  // Update starting time in Redis
+  await saveSessionToRedis(roomCode, {
+    questionStartTime: new Date()
+  });
 
-  // Broadcast question details to clients (strip correctIndex for cheating protection)
+  // Broadcast question to all clients
   io.to(roomCode).emit('server:question-broadcast', {
     questionText: question.text,
     options: question.options,
     timeLimit: question.timeLimit,
-    index: session.currentQuestionIndex,
+    index: questionIndex,
     total: quiz.questions.length,
-    timeLeft: roomData.timeLeft
+    timeLeft: question.timeLimit
   });
 
-  // Start server-authoritative timer interval
-  roomData.timerInterval = setInterval(async () => {
-    roomData.timeLeft--;
+  // Server-authoritative timer interval tick
+  localTimer.timerInterval = setInterval(async () => {
+    localTimer.timeLeft--;
+    io.to(roomCode).emit('server:timer-tick', { timeLeft: localTimer.timeLeft });
 
-    // Broadcast tick to all connected clients
-    io.to(roomCode).emit('server:timer-tick', { timeLeft: roomData.timeLeft });
-
-    if (roomData.timeLeft <= 0) {
-      clearInterval(roomData.timerInterval);
-      roomData.timerInterval = null;
-
-      // Timer ended, reveal answers and calculate leaderboard
-      const freshSession = await GameSession.findOne({ roomCode });
-      if (freshSession && freshSession.status === 'active') {
-        revealQuestionResults(io, roomCode, freshSession);
-      }
+    if (localTimer.timeLeft <= 0) {
+      clearInterval(localTimer.timerInterval);
+      localTimer.timerInterval = null;
+      revealQuestionResults(io, roomCode);
     }
   }, 1000);
+  localTimerRegistry.set(roomCode, localTimer);
 };
 
-// Helper: Reveal correct answer and send leaderboard updates
-const revealQuestionResults = async (io, roomCode, session) => {
-  const roomData = activeRooms.get(roomCode);
-  if (!roomData) return;
-
-  // Clear timer interval
-  if (roomData.timerInterval) {
-    clearInterval(roomData.timerInterval);
-    roomData.timerInterval = null;
+// Helper: Reveal answers and leaderboard standing
+const revealQuestionResults = async (io, roomCode) => {
+  const localTimer = localTimerRegistry.get(roomCode);
+  if (localTimer && localTimer.timerInterval) {
+    clearInterval(localTimer.timerInterval);
+    localTimer.timerInterval = null;
   }
+
+  const session = await getSessionFromRedis(roomCode);
+  if (!session) return;
 
   const quiz = await Quiz.findById(session.quizId);
   const currentQuestion = quiz.questions[session.currentQuestionIndex];
   const isLastQuestion = session.currentQuestionIndex === quiz.questions.length - 1;
 
-  // Compile leaderboard scores
-  // Sort players by score descending
   const sortedPlayers = [...session.players].sort((a, b) => b.score - a.score);
-
-  // We want to calculate ranks and score differences (deltas) for active display
-  // Let's attach rankings and previous ranks if we want, or just return sorted player list.
-  // Standard leaderboard update payload:
-  // { players: [{ nickname, score, rankChange }, ...], correctIndex, isLastQuestion }
-  
-  const leaderboardPayload = sortedPlayers.map((player, idx) => {
-    return {
-      nickname: player.nickname,
-      score: player.score,
-      rank: idx + 1,
-      isConnected: player.socketId !== null
-    };
-  });
+  const leaderboardPayload = sortedPlayers.map((player, idx) => ({
+    nickname: player.nickname,
+    score: player.score,
+    rank: idx + 1,
+    isConnected: player.socketId !== null
+  }));
 
   io.to(roomCode).emit('server:leaderboard-update', {
     players: leaderboardPayload,
@@ -583,38 +559,34 @@ const revealQuestionResults = async (io, roomCode, session) => {
   });
 };
 
-// Helper: Terminate game session and persist final results
+// Helper: End session and write final rankings to DB
 const endGameAndBroadcastResults = async (io, roomCode, session) => {
-  const roomData = activeRooms.get(roomCode);
-  
-  // Clear any running timers
-  if (roomData && roomData.timerInterval) {
-    clearInterval(roomData.timerInterval);
-    roomData.timerInterval = null;
+  const localTimer = localTimerRegistry.get(roomCode);
+  if (localTimer && localTimer.timerInterval) {
+    clearInterval(localTimer.timerInterval);
   }
+  localTimerRegistry.delete(roomCode);
 
-  session.status = 'finished';
-  session.lastActive = new Date();
-  await session.save();
-
-  // Sort players to assign final ranks
   const sortedPlayers = [...session.players].sort((a, b) => b.score - a.score);
-
-  // Update PlayerResults and broadcast final stats
   const finalResults = [];
 
+  // Write rankings database records
   for (let idx = 0; idx < sortedPlayers.length; idx++) {
     const player = sortedPlayers[idx];
     const rank = idx + 1;
 
-    let result = await PlayerResult.findOne({ sessionId: session._id, nickname: player.nickname });
+    let result = await PlayerResult.findOne({ 
+      sessionId: session._id || await getSessionMongoId(roomCode), 
+      nickname: player.nickname 
+    });
+
     if (result) {
       result.rank = rank;
       result.finalScore = player.score;
       await result.save();
     } else {
       result = new PlayerResult({
-        sessionId: session._id,
+        sessionId: session._id || await getSessionMongoId(roomCode),
         nickname: player.nickname,
         answers: [],
         finalScore: player.score,
@@ -632,9 +604,21 @@ const endGameAndBroadcastResults = async (io, roomCode, session) => {
     });
   }
 
+  // Update backing GameSession in MongoDB
+  await GameSession.findOneAndUpdate({ roomCode }, {
+    status: 'finished',
+    players: session.players
+  });
+
   io.to(roomCode).emit('server:final-results', { results: finalResults });
-  
-  // Remove room from active memory registry
-  activeRooms.delete(roomCode);
-  console.log(`Room ${roomCode} ended and deleted from memory.`);
+
+  // Delete volatile room key from Redis
+  await redisClient.del(`room:${roomCode}`);
+  logger.info('Cleaned up room state from Redis', { roomCode });
+};
+
+// Helper: Load session MongoId from database
+const getSessionMongoId = async (roomCode) => {
+  const session = await GameSession.findOne({ roomCode });
+  return session ? session._id : null;
 };

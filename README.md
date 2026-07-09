@@ -1,88 +1,140 @@
-# QuizPulse 🎮⚡
+# Pulse ⚡
 
-QuizPulse is a real-time collaborative quiz application (similar to Kahoot) built using the MERN stack and Socket.io. It supports server-authoritative timer ticking, dynamic live leaderboards, animated rank change podiums, and seamless player disconnection/reconnection handling.
+Pulse is a real-time engagement platform for team training sessions, workshops, and live events.
 
----
-
-## Technical Stack
-
-- **Frontend**: React (Vite) + Tailwind CSS + Socket.io-client
-- **Backend**: Node.js + Express + Socket.io server
-- **Database**: MongoDB + Mongoose (schemas: `Quiz`, `GameSession`, `PlayerResult`)
-- **Real-Time Synchronization**: WebSockets via Socket.io
+<!-- PLACEHOLDER: Drop your hero screenshot or gameplay GIF here -->
+<!-- <img src="docs/hero.gif" alt="Pulse Platform Demo" width="100%" /> -->
 
 ---
 
-## Folder Structure
+## Why This Exists
+In interactive corporate learning, professional workshops, and remote team check-ins, engagement often lags due to static tools. Pulse was created to solve this by providing a highly responsive, synchronous presenter-led workspace that turns training sessions into lively, interactive exercises. Designed with sub-second synchronization and robust state persistence, Pulse scales horizontally to support thousands of active participants across concurrent workshop rooms.
+
+---
+
+## Features
+
+### 📋 Core Engagement
+- **Presenter-Led Sessions**: Presenters control room flows, advancing slides and questions synchronously to all participants.
+- **Server-Authoritative Timing**: Prevents client-side manipulation. Timers tick on the backend and enforce points calculations based on speed and accuracy.
+- **Standings & Podium**: Real-time leaderboards indicate rank changes dynamically between slides, culminating in an animated podium finish for winners.
+- **Resilient Connection Recovery**: Participants retain progress and scores if their connection drops. Reconnecting immediately binds them back to the active room.
+
+### 🤖 AI-Powered Content Creation
+- **Insta-Generation via LLM**: Presenters can input any topic and configure question count and difficulty to auto-generate full workshop templates instantly.
+- **Smart Schema Validation & Fallback**: The generator validates structure and constraints (such as exact counts, correct options, indexes), executing an automated prompt retry on the backend if a response is malformed.
+- **IP Rate Limiting**: Built-in rate limiter controls API overhead costs and mitigates service spam.
+
+### ⚙️ Under The Hood (Production Readiness)
+- **Redis Session Storage**: In-memory active room states are moved off the server thread onto Redis hashes for sub-millisecond lookups and updates.
+- **Horizontal Scaling Bridge**: Integrated Redis adapter bridges Socket.io instances, allowing active rooms to be spread across multiple backend servers.
+- **Zod Schema Gatekeeping**: Public routes validate input shapes at the controller boundary, failing fast with structured `400 Bad Request` states.
+- **Structured Logging**: Replaced generic console logging with JSON-based `winston` logging, capturing request durations and diagnostic categories.
+- **Automated Test Coverage**: Rigorous test suite using Jest + Supertest (backend routes & live socket clients) and React Testing Library (frontend components).
+- **GitHub Actions CI/CD Pipeline**: Triggers automated dependency installs, linters, and full test suites on every pull request.
+
+---
+
+## System Architecture
+
+Pulse utilizes a decoupled, real-time message-brokered architecture designed to support horizontal scaling:
 
 ```
-.
-├── backend/
-│   ├── src/
-│   │   ├── config/db.js          # Database connection setup
-│   │   ├── models/               # Mongoose Schemas (Quiz, GameSession, PlayerResult)
-│   │   ├── routes/quizRoutes.js  # Quiz CRUD REST endpoints
-│   │   ├── socket/handlers.js    # Authoritative socket event controllers
-│   │   └── server.js             # HTTP/Express entrypoint
-│   └── .env                      # Server configuration variables
-└── frontend/
-    ├── src/
-    │   ├── components/           # Modular UI screens (Lobby, Active Game, Leaderboard, Podium)
-    │   ├── socket.js             # Client Socket.io connection manager
-    │   ├── App.jsx               # Core view routing and Socket listener hook
-    │   └── index.css             # Base styles, animations, and Tailwind directives
-    └── tailwind.config.js
+[ React Client ] 
+       │ 
+       ▼ (WebSockets via Socket.io)
+[ Nginx Load Balancer / API Gateway ]
+       │
+       ├───────────────────────────────┐
+       ▼                               ▼
+[ Express Server (Node - Instance 1) ] [ Express Server (Node - Instance N) ]
+       │                               │
+       ├───────────────────────────────┴───────────────────────────────┐
+       ▼ (Pub/Sub Adapter)                                             ▼ (Session Hash Store)
+[ Redis Cluster / Cache ] ─────────────────────────────────────────► [ MongoDB (Persistent DB) ]
+       │
+       ▼ (Fetch REST)
+[ Google Gemini Developer API ]
 ```
+
+<!-- PLACEHOLDER: Add custom system architecture diagram here -->
+<!-- <img src="docs/architecture.png" alt="Pulse System Architecture" width="80%" /> -->
 
 ---
 
-## Environment Variables
+## Technology Stack
 
-### Backend (`backend/.env`)
-Create a `.env` file in the `backend/` directory with the following variables:
+| Layer | Technology | Details |
+| :--- | :--- | :--- |
+| **Frontend UI** | React 19 (Vite) | High-speed hot module replacement, client-side rendering |
+| **Styling** | Tailwind CSS v3 | Elegant layout utilities, transition ease configurations |
+| **Real-time Client** | Socket.io-client | Live real-time bidirectional message socket |
+| **Backend API** | Node.js + Express | REST routing endpoint engines and process runtime |
+| **Real-time Gateway**| Socket.io | Server-side WebSocket connection and event orchestration |
+| **Scaling Cache** | Redis (via ioredis) | Fast shared session hash persistence |
+| **Inter-Process Sync**| @socket.io/redis-adapter | Message broker enabling horizontal cluster broadcasting |
+| **Database Store** | MongoDB (via Mongoose) | Persistent records for quiz templates and historical rankings |
+| **Logger Utility** | Winston | Categorized structured JSON stdout logging |
+| **Input Validation** | Zod | Strictly enforced request body schema mapping |
+| **API Protection** | express-rate-limit | Endpoint requests throttling preventing spam |
+| **Test Suites** | Jest + Supertest / RTL | Automated testing of APIs, Sockets, and UI layers |
 
+---
+
+## Local Setup Instructions
+
+### Prerequisites
+- **Node.js** (v18+)
+- **MongoDB** (running locally on port 27017 or a MongoDB Atlas string)
+- **Redis** (running locally on port 6379)
+- **Google Gemini API Key**
+
+### 1. Clone & Set Up Configuration
+```bash
+git clone https://github.com/KuldeepLakhera9/QuizPulse.git
+cd QuizPulse
+```
+
+Create a `.env` file in the **`backend`** directory:
 ```env
 PORT=5001
 MONGODB_URI=mongodb://127.0.0.1:27017/quizpulse
+REDIS_URL=redis://127.0.0.1:6379
+GEMINI_API_KEY=your_gemini_api_key
 NODE_ENV=development
 ```
 
-### Frontend (`frontend/.env` - Optional)
-If your backend is running on a different URL/port than `http://localhost:5001`, you can create a `.env` file in the `frontend/` directory:
-
-```env
-VITE_BACKEND_URL=http://localhost:5001
-```
-
----
-
-## Getting Started
-
-### Prerequisites
-- Node.js (v18+ recommended)
-- MongoDB installed and running locally on port `27017`
-
-### 1. Run the Backend Server
+### 2. Install & Run Backend
 ```bash
 cd backend
 npm install
 npm run dev
 ```
-The server will start on port `5001` and connect to the local MongoDB database.
 
-### 2. Run the Frontend Dev Server
+### 3. Install & Run Frontend
 ```bash
-cd frontend
-npm install
+cd ../frontend
+npm install --legacy-peer-deps
 npm run dev
 ```
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open **`http://localhost:5173/`** (or the port Vite prints in your console) to view the live dashboard.
+
+### 4. Running Test Suites
+To run tests locally:
+- **Backend Tests**: `cd backend && npm test`
+- **Frontend Tests**: `cd frontend && npm test`
 
 ---
 
-## Interview Talking Points: Real-time State Synchronization
+## Scaling Notes: Redis & Socket.io Adapter
 
-When presenting this project in an interview, focus on these synchronization challenges and how they were solved:
+When a real-time multiplayer application starts to scale, it is common to run multiple instances of the backend node process to handle the CPU load of active timers and connection volumes. However, this introduces two challenges in traditional setups:
+1. **Broken Broadcasts**: If Presenter A is connected to Instance 1, and Participant B is connected to Instance 2, a socket broadcast from Instance 1 will not reach Instance 2.
+2. **Scattered Memory**: If Instance 1 holds the player list in a local variable, Instance 2 knows nothing about it.
 
-> **Real-Time State Synchronization Challenge & Solution:**
-> In QuizPulse, the primary challenge was implementing a server-authoritative quiz flow that maintains absolute sync between all clients (host and multiple players) while resisting client-side tampering. Rather than relying on fragile local client timers, the backend Node.js server drives the countdown loop (`server:timer-tick`) and manages state changes. Player scores are calculated server-side immediately upon answer reception by checking correctness and measuring milliseconds elapsed (`Date.now() - questionStartTime`) against the authoritative start timestamp saved in MongoDB. To ensure a seamless user experience, we handled edge cases like sudden player disconnection or page reloads mid-game: the backend preserves the player's session profile, score, and state in MongoDB. When a disconnected player re-enters the room code and nickname, the socket server dynamically updates their socket association, joins them back to the room, and broadcasts the current game's exact question, timer, and state, resuming gameplay smoothly without breaking room integrity.
+By introducing `@socket.io/redis-adapter`, we transform Redis into a central message broker. Every broadcast event is published to a Redis channel, which is then picked up and transmitted to clients by all other Node instances in the cluster. Combined with storing volatile session states in shared Redis Hashes (`room:<roomCode>`), any backend server in our cluster can instantly fetch, update, and broadcast the authoritative game states. This setup allows Pulse to scale horizontally from a single developer machine to a load-balanced cluster of N servers without code modifications.
+
+---
+
+## License & Contribution
+Distributed under the MIT License. Pull Requests (PRs) and suggestions are always welcome!
